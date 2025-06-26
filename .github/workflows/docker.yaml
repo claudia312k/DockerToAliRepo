@@ -1,66 +1,39 @@
-name: Sync Docker Images to Aliyun
+name: Debug Aliyun Login
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
-    paths:
-      - 'images.txt'
+  workflow_dispatch: # 只允许手动触发
 
 jobs:
-  sync:
-    name: Sync Images
+  debug-login:
+    name: Test Aliyun Login
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Check if secrets are loaded
+        run: |
+          if [ -z "${{ secrets.ALIYUN_REGISTRY_USER }}" ]; then
+            echo "::error::ALIYUN_REGISTRY_USER secret is EMPTY or NOT SET."
+            exit 1
+          else
+            echo "✅ SUCCESS: ALIYUN_REGISTRY_USER secret is loaded."
+          fi
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          if [ -z "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}" ]; then
+            echo "::error::ALIYUN_REGISTRY_PASSWORD secret is EMPTY or NOT SET."
+            exit 1
+          else
+            echo "✅ SUCCESS: ALIYUN_REGISTRY_PASSWORD secret is loaded."
+          fi
+          
+          if [ -z "${{ secrets.ALIYUN_REGISTRY }}" ]; then
+            echo "::error::ALIYUN_REGISTRY secret is EMPTY or NOT SET."
+            exit 1
+          else
+            echo "✅ SUCCESS: ALIYUN_REGISTRY secret is loaded."
+          fi
 
-      # 这一步，我们使用官方的 Secret 名字来登录
-      - name: Login to Aliyun Registry
+      - name: Attempt to Login to Aliyun Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.ALIYUN_REGISTRY }}
           username: ${{ secrets.ALIYUN_REGISTRY_USER }}
           password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
-
-      - name: Login to GitHub Container Registry (ghcr.io)
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Sync images from images.txt
-        run: |
-          # 循环读取 images.txt 文件的每一行
-          while IFS= read -r image_to_sync || [ -n "$image_to_sync" ]; do
-            # 忽略空行和注释
-            if [[ -z "$image_to_sync" ]] || [[ "$image_to_sync" == \#* ]]; then
-              continue
-            fi
-
-            echo "--- Processing image: $image_to_sync ---"
-
-            # 1. 从源仓库拉取镜像 (比如 ghcr.io)
-            echo "-> Pulling from source: $image_to_sync"
-            docker pull "$image_to_sync"
-
-            # 2. 准备推送到阿里云的新名字
-            image_name_tag=$(echo "$image_to_sync" | awk -F'/' '{print $NF}')
-            new_aliyun_image="${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAME_SPACE }}/${image_name_tag}"
-            
-            # 3. 给镜像打上新的 tag
-            echo "-> Tagging for Aliyun: $new_aliyun_image"
-            docker tag "$image_to_sync" "$new_aliyun_image"
-
-            # 4. 推送到阿里云
-            echo "-> Pushing to Aliyun: $new_aliyun_image"
-            docker push "$new_aliyun_image"
-
-            echo "--- Finished processing: $image_to_sync ---"
-            echo ""
-          done < images.txt
-
