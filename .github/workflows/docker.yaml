@@ -1,51 +1,90 @@
-name: Sync GHCR to Aliyun
+name: Sync Docker Images to Aliyun
 
 on:
-  workflow_dispatch: # 允许我们手动触发
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'images.txt'
+
+env:
+  # 我们在这里定义好官方的 Secret 名字，供后面的脚本使用
+  ALIYUN_REGISTRY: ${{ secrets.ALIYUN_REGISTRY }}
+  ALIYUN_NAME_SPACE: ${{ secrets.ALIYUN_NAME_SPACE }}
+  ALIYUN_REGISTRY_USER: ${{ secrets.ALIYUN_REGISTRY_USER }}
+  ALIYUN_REGISTRY_PASSWORD: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
 
 jobs:
-  sync-to-aliyun:
-    name: Sync Image from GHCR to Aliyun
+  build:
+    name: Sync Images
     runs-on: ubuntu-latest
-    
-    # 定义我们要同步的镜像
-    env:
-      SOURCE_IMAGE: ghcr.io/claudia312k/agent_ai:latest
-      
+    permissions: # 确保有读取私有包的权限 (以防万一)
+      contents: read
+      packages: read
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 第一步：登录到 GitHub Packages (ghcr.io)
+      # 这是我们确认过能成功的非交互式登录
+      - name: Login to Aliyun Registry
+        run: echo "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}" | docker login ${{ secrets.ALIYUN_REGISTRY }} -u ${{ secrets.ALIYUN_REGISTRY_USER }} --password-stdin
+
+      # 登录到 GHCR，以便拉取私有包
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }} # 使用 GitHub 自动生成的 Token
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 第二步：登录到阿里云 ACR
-      - name: Login to Aliyun Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.ALIYUN_REGISTRY }}
-          username: ${{ secrets.ALIYUN_REGISTRY_USER }}
-          password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
-
-      # 第三步：拉取源镜像
-      - name: Pull image from GHCR
-        run: docker pull ${{ env.SOURCE_IMAGE }}
-
-      # 第四步：准备新的阿里云 Tag
-      - name: Tag image for Aliyun
+      # 这里，我们使用原作者的、经过验证的、更稳定的脚本逻辑
+      - name: Sync images from images.txt to Aliyun
         run: |
-          # 拼接出阿里云的完整镜像名
-          NEW_TAG="${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAME_SPACE }}/agent_ai:latest"
-          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+          while IFS= read -r line; do
+              [[ -z "$line" ]] && continue
+              if echo "$line" | grep -q '^\s*#'; then
+                  continue
+              fi
           
-          # 给镜像打上新 Tag
-          docker tag ${{ env.SOURCE_IMAGE }} $NEW_TAG
+              echo "--- Processing image: $line ---"
+              docker pull $line
+              
+              platform=$(echo "$line" | awk -F'--platform[ =]' '{if (NF>1) print $2}' | awk '{print $1}')
+              platform_prefix=""
+              if [ -n "$platform" ]; then
+                  platform_prefix="${platform//\//_}_"
+              fi
+              
+              image=$(echo "$line" | awk '{print $NF}')
+              image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
+              name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
+              image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
+              name_space_prefix=""
+              
+              # 这个复杂的逻辑是原作者写的，用来处理重名等各种情况
+              declare -A temp_map
+              if [[ -n "${temp_map[$image_name]}" ]]; then
+                   if [[ "${temp_map[$image_name]}" != "${name_space}_"  ]]; then
+                      if [[ -n "${name_space}" ]]; then
+                         name_space_prefix="${name_space}_"
+                      fi
+                   fi
+              else
+                  temp_map[$image_name]="${name_space}_"
+              fi
+              
+              image_name_tag="${image_name_tag%%@*}"
+              new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$name_space_prefix$image_name_tag"
+              
+              echo "-> Tagging as: $new_image"
+              docker tag "$image" "$new_image"
+              
+              echo "-> Pushing to Aliyun..."
+              docker push "$new_image"
 
-      # 第五步：推送到阿里云
-      - name: Push image to Aliyun
-        run: docker push ${{ env.NEW_TAG }}
+              echo "--- Finished: $line ---"
+              echo ""
+          done < images.txt
