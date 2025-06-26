@@ -13,25 +13,22 @@ env:
 
 jobs:
   build:
-    name: Pull
     runs-on: ubuntu-latest
     steps:
-      - name: Docker Setup Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Build and push image Aliyun
         run: |
+          export ALIYUN_REGISTRY="${{ secrets.ALIYUN_REGISTRY }}"
+          export ALIYUN_NAME_SPACE="${{ secrets.ALIYUN_NAME_SPACE }}"
+          export ALIYUN_REGISTRY_USER="${{ secrets.ALIYUN_REGISTRY_USER }}"
+          export ALIYUN_REGISTRY_PASSWORD="${{ secrets.ALIYUN_REGISTRY_PASSWORD }}"
+
           echo "ALIYUN_REGISTRY: $ALIYUN_REGISTRY"
           echo "ALIYUN_NAME_SPACE: $ALIYUN_NAME_SPACE"
           echo "ALIYUN_REGISTRY_USER: $ALIYUN_REGISTRY_USER"
-          # 检查变量是否为空
-          if [[ -z "$ALIYUN_REGISTRY" || -z "$ALIYUN_NAME_SPACE" ]]; then
-            echo "ALIYUN_REGISTRY or ALIYUN_NAME_SPACE is empty!"
-            exit 1
-          fi
+          echo "ALIYUN_REGISTRY_PASSWORD: $ALIYUN_REGISTRY_PASSWORD"
 
           docker login -u $ALIYUN_REGISTRY_USER -p $ALIYUN_REGISTRY_PASSWORD $ALIYUN_REGISTRY
 
